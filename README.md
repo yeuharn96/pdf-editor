@@ -1,5 +1,6 @@
 # PDF Editor
-A client-side browser PDF editor.
+A client-side browser PDF editor.<br/>
+Setting up a local hosting server is not required, you can directly open <code>index.html</code> with <code>file:///</code> via Chrome.
 
 <h3>The Goal</h3>
 To edit pdf files without using any free-trial/paid pdf editor software or free online pdf editor.
