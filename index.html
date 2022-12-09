@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-16" />
+    <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+    <title>PDF Editor</title>
+    <link rel="stylesheet" href="./cdn/bootstrap-5.2.2.css" />
+    <!-- <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.2.228/pdf.min.js"></script> -->
+    <script src="./cdn/pdf.js-2.2.228.min.js"></script>
+    <!-- <script src="https://unpkg.com/pdf-lib"></script> -->
+    <script src="./cdn/pdf-lib-1.17.1.min.js"></script>
+
+    <style>
+        .pdf-text {
+            padding: 0;
+            margin: 0;
+            border: 0;
+            background: transparent;
+        }
+
+        button span {
+            /* https://stackoverflow.com/questions/43411356/parent-onclick-is-not-triggered-when-the-child-element-is-clicked-inside-button */
+            pointer-events: none;
+        }
+
+        .resizeable img {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 100%;
+            height: 100%;
+        }
+
+        .resizeable.resizeable-rect {
+            border-style: solid;
+        }
+
+        .resizeable .resize-node {
+            display: none;
+            position: absolute;
+            background-color: black;
+            border: 1px solid white;
+        }
+
+        .resizeable .resize-node.top-left,
+        .resizeable .resize-node.bottom-right {
+            cursor: nw-resize;
+        }
+
+        .resizeable .resize-node.top-right,
+        .resizeable .resize-node.bottom-left {
+            cursor: ne-resize;
+        }
+
+        .resizeable.active * {
+            border: 1px solid black;
+            outline: 1px solid white;
+        }
+
+        .resizeable.active .resize-node {
+            display: block;
+        }
+
+        /* https://stackoverflow.com/questions/826782/how-to-disable-text-selection-highlighting */
+        *.unselectable {
+            -moz-user-select: none;
+            -khtml-user-select: none;
+            -webkit-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+        }
+
+        #divNavPdfPages .div-img-container {
+            margin-bottom: 1.5rem;
+            width: 100%;
+            text-align: center;
+        }
+
+        #divNavPdfPages .div-img-container img {
+            width: 50%;
+            box-shadow: 0 .5rem 1rem rgba(0, 0, 0, .15);
+            border: var(--bs-border-width) var(--bs-border-style) var(--bs-border-color);
+            opacity: 0.5;
+        }
+
+        #divNavPdfPages .div-img-container img:hover {
+            cursor: pointer;
+            opacity: 0.75;
+        }
+
+        #divNavPdfPages .div-img-container img.active {
+            outline: 8px solid rgb(138, 180, 248);
+            opacity: 1;
+        }
+
+        #divNavPdfPages .div-img-container .div-page-num {
+            color: white;
+            font-weight: bold;
+            margin-top: 0.5rem;
+        }
+    </style>
+</head>
+
+<body>
+    <!-- TOP BAR -->
+    <div class="position-fixed top-0 w-100 row g-0 shadow" style="height: 3rem; z-index:1; background-color: lightgray;"
+        onmouseenter="p5Flag.mouseOverToolbar = true" onmouseleave="p5Flag.mouseOverToolbar = false">
+        <!-- TOP LEFT -->
+        <div class="col-4 d-flex align-items-center px-2">
+            <label id="lblUploadPdf">Upload PDF: <input type="file" id="inpPdf" /></label>
+            <button type="button" id="btnSave" onclick="savePdf()">Save</button>
+            <!-- <button type="button" onclick="savePdf(true)">preview</button> -->
+        </div>
+        <!-- TOP LEFT END -->
+
+        <!-- TOP RIGHT -->
+        <div class="col-8">
+            <div id="divTextCtrl" class="ctrl-pane w-100 h-100 align-items-center" style="display: none">
+                <span id="spnTxt" class="opacity-0 position-fixed pdf-text" style="z-index: -1;"></span>
+                <div class="me-3">
+                    <button type="button" class="fw-bold me-2" style="width: 30px" title="Bold"
+                        onclick="TextMode.toggleBold(p5CurrentText)">B</button>
+                    <button type="button" class="fst-italic" style="width: 30px" title="Italic"
+                        onclick="TextMode.toggleItalic(p5CurrentText)">I</button>
+                </div>
+                <div class="mx-3 px-1 d-flex align-items-center" title="Change text color">
+                    Color: <input type="color" id="inpTextColor" class="ms-1"
+                        oninput="TextMode.setProperties(p5CurrentText)" />
+                </div>
+                <div class="mx-3 px-1" title="Change font family">
+                    Font:
+                    <select id="selFontFamily" onchange="TextMode.setProperties(p5CurrentText)">
+                        <option value="Helvetica">Helvetica</option>
+                        <option value="TimesRoman">Times New Roman</option>
+                    </select>
+                </div>
+                <div class="mx-3 px-1" title="Change font size in (pt)">
+                    Size:
+                    <select id="selFontSize" class="px-2" onchange="TextMode.setProperties(p5CurrentText)">
+                        <script>
+                            // 4-99
+                            document.write(...[...Array(96)].map((v, i) => `<option value="${i + 4}">${i + 4}</option>`))
+                        </script>
+                    </select>
+                    <label class="fw-bold">(pt)</label>
+                </div>
+                <div class="mx-3 px-1">
+                    <b>Drag</b> to move textbox around
+                </div>
+            </div>
+            <div id="divFreehandCtrl" class="ctrl-pane w-100 h-100 align-items-center" style="display: none">
+                <div class="me-3 px-1 d-flex align-items-center" title="Change line color">
+                    Color: <input type="color" id="inpFreehandColor" class="ms-1" />
+                </div>
+                <div class="mx-3 px-1" title="Change line weight in (pt)">
+                    Line weight:
+                    <input type="number" id="inpFreehandLineWeight" class="number-input" min="1" step="1" max="128"
+                        value="1" />
+                    <label class="fw-bold">(pt)</label>
+                </div>
+            </div>
+            <div id="divImageCtrl" class="ctrl-pane w-100 h-100 align-items-center" style="display: none">
+                <div class="me-3">
+                    <input type="file" id="inpImage" accept=".png" />
+                </div>
+                <div class="mx-3 px-1">
+                    Hold <b>SHIFT</b> to resize with aspect ratio
+                </div>
+            </div>
+            <div id="divRectCtrl" class="ctrl-pane w-100 h-100 align-items-center" style="display: none">
+                <div class="mx-3 px-1 d-flex align-items-center" title="Change fill color">
+                    Fill: <input type="color" id="inpRectFillColor" class="ms-1"
+                        oninput="p5CurrentResizeable?.updateProperties()" />
+                    <label class="mx-2" title="Transparent">
+                        <input type="checkbox" id="inpRectFillColorTransparent"
+                            onchange="p5CurrentResizeable?.updateProperties()" />
+                        Trans.
+                    </label>
+                </div>
+                <div class="mx-3 px-1 d-flex align-items-center" title="Change border color">
+                    Border: <input type="color" id="inpRectBorderColor" class="ms-1"
+                        oninput="p5CurrentResizeable?.updateProperties()" />
+                    <label class="mx-2" title="Transparent">
+                        <input type="checkbox" id="inpRectBorderColorTransparent"
+                            onchange="p5CurrentResizeable?.updateProperties()" />
+                        Trans.
+                    </label>
+                </div>
+                <div class="mx-3 px-1" title="Change border line weight in (pt)">
+                    Border line weight:
+                    <input type="number" id="inpRectBorderLineWeight" class="number-input" min="1" step="1" max="128"
+                        value="1" oninput="p5CurrentResizeable?.updateProperties()" />
+                    <label class="fw-bold">(pt)</label>
+                </div>
+                <div class="mx-3 px-1">
+                    Hold <b>SHIFT</b> to resize as square
+                </div>
+            </div>
+        </div>
+        <!-- TOP RIGHT END -->
+    </div>
+    <!-- TOP BAR END -->
+
+    <div class="row g-0" style="margin-top: 3rem;">
+        <!-- LEFT PANE -->
+        <div class="col-4">
+            <div class="position-fixed p-4 shadow" style="top: 4.5rem; left: 0; width: 30vw;">
+                <!-- CONTROL PANE -->
+                <div id="divControlPane" class="row g-0">
+                    <div class="col-6 mb-2">
+                        <button type="button"
+                            class="btn border border-dark btn-mode px-2 py-1 rounded-0 d-flex w-100 me-2"
+                            onclick="switchMode(event, 'text')">
+                            <span>&#9997;</span>
+                            <span class="mx-auto">Text</span>
+                        </button>
+                    </div>
+                    <div class="col-6 mb-2">
+                        <button type="button"
+                            class="btn border border-dark btn-mode px-2 py-1 rounded-0 d-flex w-100 ms-2"
+                            onclick="switchMode(event, 'freehand')">
+                            <span>&#9998;</span>
+                            <span class="mx-auto">Freehand</span>
+                        </button>
+                    </div>
+                    <div class="col-6">
+                        <button type="button"
+                            class="btn border border-dark btn-mode px-2 py-1 rounded-0 d-flex w-100 me-2"
+                            onclick="switchMode(event, 'image')">
+                            <span>&#10063;</span>
+                            <span class="mx-auto">Image</span>
+                        </button>
+                    </div>
+                    <div class="col-6">
+                        <button type="button"
+                            class="btn border border-dark btn-mode px-2 py-1 rounded-0 d-flex w-100 ms-2"
+                            onclick="switchMode(event, 'rect')">
+                            <span>&#9744;</span>
+                            <span class="mx-auto">Rectangle</span>
+                        </button>
+                    </div>
+
+                    <div class="col-12 mt-4 d-flex justify-content-center align-items-center">
+                        <button type="button" class="px-3" onclick="gReader.firstPage()">&#10094;&#10094;</button>
+                        <button type="button" class="mx-2 px-3" onclick="gReader.prevPage()">&#10094;</button>
+                        <div>
+                            Page
+                            <select id="selPdfCurrentPage" class="px-2" onchange="gReader.showPage(Number(this.value))">
+                                <option>1</option>
+                            </select>
+                            of
+                            <span id="spnPdfTotalPage" class="fw-bold">1</span>
+                        </div>
+                        <button type="button" class="mx-2 px-3" onclick="gReader.nextPage()">&#10095;</button>
+                        <button type="button" class="px-3" onclick="gReader.lastPage()">&#10095;&#10095;</button>
+                    </div>
+                </div>
+                <!-- CONTROL PANE END -->
+
+                <!-- PDF PAGE LIST -->
+                <div class="row g-0 mt-4">
+                    <div id="divNavPdfPages"
+                        class="col-12 div-nav-pane bg-secondary py-4 w-100 overflow-auto position-relative"
+                        style="height: 55vh">
+                        <div id="divNavPdfPageSpinner"
+                            class="position-absolute top-0 w-100 h-100 d-none flex-column justify-content-center align-items-center"
+                            style="background-color: rgba(255, 255, 255, 0.5)">
+                            <div class="spinner-border fs-1" role="status" style="width: 8rem; height: 8rem;">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <span class="fs-1 fw-bold">Loading Pages</span>
+                        </div>
+                        <canvas id="preview-canvas" class="d-none"></canvas>
+                    </div>
+                </div>
+                <!-- PDF PAGE LIST END -->
+            </div>
+
+
+
+        </div>
+        <!-- LEFT PANE END -->
+
+        <!-- RIGHT PANE -->
+        <div class="col-8 bg-secondary" style="min-height: 90vh">
+            <div class="container text-center mt-4">
+                <canvas id="pdf-canvas" width="800" class="border shadow"></canvas>
+            </div>
+        </div>
+        <!-- RIGHT PANE END -->
+    </div>
+
+
+
+    <script src="./common.js"></script>
+    <script src="./cdn/p5-1.5.0.js"></script>
+    <script src="./p5-main.js"></script>
+    <script>
+        var gReader;
+
+        document.addEventListener("DOMContentLoaded", function () {
+
+            document.querySelector('#btnSave').style.display = 'none';
+            document.querySelector('#divControlPane').style.display = 'none';
+
+            TextMode.init();
+            ImageMode.init();
+            RectMode.init();
+
+            document.querySelectorAll('.number-input').forEach(inp => initNumberInput(inp));
+
+            initPdfReader();
+
+            PdfPageList.onInitComplete = function () {
+                PdfPageList.setCurrentPage(gReader.$currentPage);
+            };
+            // when user click pdf page from preview list (#divNavPdfPages)
+            PdfPageList.onPageChanged = function (pageNum) {
+                gReader.showPage(pageNum);
+            };
+
+            // pdf upload <input>
+            Utils._inpPdf.addEventListener('change', function () {
+                const [file] = this.files;
+                if (file) {
+                    document.querySelector('#btnSave').style.display = '';
+                    document.querySelector('#divControlPane').style.display = '';
+                    document.querySelector('#lblUploadPdf').style.display = 'none';
+
+                    const url = URL.createObjectURL(file);
+                    gReader.load(url);
+                    PdfPageList.init(url); // load pdf preview pages
+                }
+            });
+
+        });
+
+        function initNumberInput(inp) {
+            inp.addEventListener('focus', function () {
+                this.prevValue = this.value;
+            });
+            inp.addEventListener('input', function (event) {
+                const el = event.target;
+                if (!Utils.isValidNumber(el.value)) {
+                    if (!Utils.isValidNumber(el.prevValue)) el.value = 1;
+                    else el.value = el.prevValue;
+                }
+                else if (Number(el.value) > Number(el.max)) el.value = el.max;
+            });
+        }
+
+        function initPdfReader() {
+            gReader = new PdfReader(Utils._pdfCanvas);
+            // when pdf loaded from file input (#inpPdf)
+            gReader.onPdfLoaded = function (totalPage) {
+                // init page navigate control
+                document.querySelector('#spnPdfTotalPage').innerHTML = totalPage;
+                const select = document.querySelector('#selPdfCurrentPage');
+                select.innerHTML = [...Array(totalPage)].map((v, i) => `<option value="${i + 1}">${i + 1}</option>`).join('');
+                select.value = 1;
+            };
+            // when page complete rendered on canvas (#pdf-canvas)
+            gReader.onPdfPageRendered = function (page) {
+                document.querySelector('#selPdfCurrentPage').value = page.pageNumber;
+                p5SwitchPage(page.pageNumber); // update UI canvas
+                PdfPageList.setCurrentPage(page.pageNumber);
+            };
+        }
+
+        function switchMode(event, mode) {
+            const activeClass = 'btn-warning';
+            document.querySelectorAll('.btn-mode').forEach(el => {
+                el.classList.remove(activeClass);
+            });
+            event.target.classList.add(activeClass);
+
+            p5SwitchMode(mode);
+
+            document.querySelector('#divTextCtrl').style.display = p5Mode === 'text' ? 'flex' : 'none';
+            document.querySelector('#divFreehandCtrl').style.display = p5Mode === 'freehand' ? 'flex' : 'none';
+            document.querySelector('#divImageCtrl').style.display = p5Mode === 'image' ? 'flex' : 'none';
+            document.querySelector('#divRectCtrl').style.display = p5Mode === 'rect' ? 'flex' : 'none';
+
+            if (p5Mode === 'image') ImageMode._inpImage.click();
+        }
+
+
+        async function savePdf(isPreview = false) {
+            const pdfWriter = new PdfWriter(p5Canvas);
+
+            // read existing pdf bytes
+            const file = Utils._inpPdf.files[0];
+            const fileName = file.name;
+            const pdfBytes = await Utils.fileToBytes(file);
+
+            // output new pdf bytes
+            const outputBytes = await pdfWriter.outputBytes(pdfBytes, p5PdfPages);
+
+            // save pdf file
+            const blob = new Blob([outputBytes], { type: "application/pdf" });
+            const url = URL.createObjectURL(blob);
+            if (isPreview) {
+                gReader.load(url);
+            }
+            else {
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = fileName;
+                link.click();
+                gReader.firstPage();
+            }
+        }
+    </script>
+</body>
+
+</html>
