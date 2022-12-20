@@ -22,7 +22,6 @@ var p5PdfPages = {}; // {'1': p5Elements, '2': p5Elements, ...}
 
 
 
-
 function p5SwitchPage(pageNum) {
     pageNum = pageNum.toString();
 
@@ -41,6 +40,8 @@ function p5SwitchPage(pageNum) {
         p5Elements = p5PdfPages[pageNum];
     }
 
+    p5Undo.switchPage(pageNum);
+
     // reset focus elements
     p5CurrentText = null;
     p5CurrentStroke = [];
@@ -53,7 +54,6 @@ function p5SwitchMode(mode) {
     p5CurrentStroke = [];
     p5CurrentResizeable = null;
 }
-
 
 
 // ----- p5.js functions -----
@@ -80,7 +80,13 @@ function mouseDragged() {
     }
 }
 function keyPressed(e) {
-    p5KeyPressed[p5Mode]?.call(this, e);
+    if (e.ctrlKey && e.key === 'z') {
+        e.preventDefault();
+        p5Undo.exec(); // run undo action
+    }
+    else {
+        p5KeyPressed[p5Mode]?.call(this, e);
+    }
 }
 function keyReleased(e) {
     p5KeyReleased[p5Mode]?.call(this, e);
@@ -90,15 +96,78 @@ function windowResized() {
 }
 
 
+var p5Undo = {
+    $btnUndo: document.querySelector('#btnUndo'),
+    pages: {}, // {'1': p5Undo.actions, '2': p5Undo.actions, ...}
+    actions: [], // [{data: {}, func()}, ...]
+
+    push(act) {
+        p5Undo.actions.push(act);
+        p5Undo.$btnUndo.disabled = false;
+    },
+    exec() {
+        p5Undo.actions.pop()?.func();
+        if (p5Undo.actions.length === 0)
+            p5Undo.$btnUndo.disabled = true;
+    },
+
+    switchPage(pageNum) {
+        if (Array.isArray(p5Undo.pages[pageNum])) {
+            p5Undo.actions = p5Undo.pages[pageNum];
+        }
+        else {
+            p5Undo.pages[pageNum] = [];
+            p5Undo.actions = p5Undo.pages[pageNum];
+        }
+        p5Undo.$btnUndo.disabled = p5Undo.actions.length === 0;
+    }
+}
+
 // ----- event handlers for each editing mode -----
 var p5TextMode = {
+    offsetX: 0,
+
+    _findCurrentTextbox() {
+        return p5Elements.find(t => t.$elt === p5CurrentText)?.$input;
+    },
     mousePressed() {
         if (p5Flag.enableCreateTextbox) {
             p5Elements.push(new PdfText());
         }
+        else {
+            const txt = p5TextMode._findCurrentTextbox();
+            if (txt) {
+                p5TextMode.offsetX = p5Utils.htmlMouseX() - txt.x;
+                p5TextMode._pushUndoAction();
+            }
+        }
     },
     mouseDragged() {
-        p5Elements.find(t => t.$elt === p5CurrentText)?.$input.position(p5Utils.htmlMouseX() - 5, p5Utils.htmlMouseY() - 10);
+        const txt = p5TextMode._findCurrentTextbox();
+        if (txt) {
+            const moveX = mouseX - pmouseX;
+            const moveY = mouseY - pmouseY;
+            txt.position(p5Utils.htmlMouseX() - p5TextMode.offsetX, p5Utils.htmlMouseY());
+        }
+    },
+    mouseReleased() {
+        p5TextMode.offsetX = 0;
+    },
+
+    _pushUndoAction() {
+        const txt = p5TextMode._findCurrentTextbox();
+        if (txt) {
+            p5Undo.push({
+                data: {
+                    textbox: txt,
+                    x: txt.x,
+                    y: txt.y
+                },
+                func() {
+                    this.data.textbox.position(this.data.x, this.data.y);
+                }
+            });
+        }
     }
 };
 var p5FreehandMode = {
@@ -112,15 +181,29 @@ var p5FreehandMode = {
         }
     },
     mousePressed() {
-        const properties = FreehandMode.getProperties();
-        stroke(...properties.color); // change line color
-        strokeWeight(properties.lineWeight); // change line weight
-    },
-    mouseReleased() {
-        // stroke completed, save and reset current stroke
         const props = FreehandMode.getProperties();
-        p5Elements.push(new FreehandStroke(p5CurrentStroke, props.color, props.lineWeight));
-        p5CurrentStroke = [];
+        stroke(...props.color); // change line color
+        strokeWeight(props.lineWeight); // change line weight
+
+        const newStroke = new FreehandStroke([], props.color, props.lineWeight);
+        p5Elements.push(newStroke);
+        p5CurrentStroke = newStroke.$points;
+
+        p5FreehandMode._pushUndoAction(newStroke);
+    },
+
+    _pushUndoAction(newStroke) {
+        p5Undo.push({
+            data: {
+                prevStrokes: get(),
+                newStroke
+            },
+            func() {
+                clear();
+                image(this.data.prevStrokes, 0, 0);
+                p5Elements.splice(p5Elements.indexOf(this.data.newStroke), 1);
+            }
+        });
     }
 };
 var p5ResizeableMode = {
@@ -140,9 +223,11 @@ var p5ResizeableMode = {
         if (p5CurrentResizeable) {
             if (p5CurrentResizeable.isMouseInArea()) {
                 p5Flag.dragging = true;
+                p5ResizeableMode._pushUndoActionEdit();
             }
             else if (p5CurrentResizeable.isMouseInNode()) {
                 p5Flag.resizing = true;
+                p5ResizeableMode._pushUndoActionEdit();
             }
             else {
                 p5CurrentResizeable.focus(false);
@@ -174,8 +259,11 @@ var p5ResizeableMode = {
         if (p5CurrentResizeable) {
             if (e.keyCode === DELETE) {
                 if (p5CurrentResizeable) {
-                    p5CurrentResizeable.remove();
-                    p5Elements.splice(p5Elements.indexOf(p5CurrentResizeable), 1);
+                    p5CurrentResizeable.hide();
+                    const itemIdx = p5Elements.indexOf(p5CurrentResizeable);
+                    p5Elements.splice(itemIdx, 1);
+                    p5ResizeableMode._pushUndoActionDelete(itemIdx);
+
                     p5CurrentResizeable = null;
                 }
             }
@@ -196,6 +284,47 @@ var p5ResizeableMode = {
         if (e.keyCode === SHIFT) {
             p5Flag.lockAspectRatio = false;
         }
+    },
+
+    _pushUndoActionEdit() {
+        const data = {
+            element: p5CurrentResizeable,
+            isDragging: p5Flag.dragging,
+            isResizing: p5Flag.resizing,
+
+            x: p5CurrentResizeable.$x,
+            y: p5CurrentResizeable.$y,
+            w: p5CurrentResizeable.$width,
+            h: p5CurrentResizeable.$height,
+            // style: { backgroundColor, borderColor, borderWidth }
+        };
+        if (p5Mode === 'rect') {
+            const style = data.element.$outerWrap.elt.style;
+            data['style'] = {
+                backgroundColor: style.backgroundColor,
+                borderColor: style.borderColor,
+                borderWidth: style.borderWidth
+            };
+        }
+        p5Undo.push({
+            data,
+            func() {
+                const el = this.data.element;
+                el.setSize(this.data.w, this.data.h);
+                el.position(this.data.x, this.data.y);
+                if (this.data.style)
+                    Object.keys(this.data.style).forEach(k => el.$outerWrap.elt.style[k] = this.data.style[k]);
+            }
+        });
+    },
+    _pushUndoActionDelete(itemIdx) {
+        p5Undo.push({
+            data: { itemIdx, element: p5CurrentResizeable },
+            func() {
+                p5Elements.splice(itemIdx, 0, this.data.element);
+                this.data.element.show();
+            }
+        });
     }
 };
 
@@ -215,7 +344,7 @@ var p5MousePressed = {
     'rect': p5ResizeableMode.mousePressed
 };
 var p5MouseReleased = {
-    // 'text': p5TextMode.mouseReleased,
+    'text': p5TextMode.mouseReleased,
     'freehand': p5FreehandMode.mouseReleased,
     'image': p5ResizeableMode.mouseReleased,
     'rect': p5ResizeableMode.mouseReleased
@@ -367,7 +496,7 @@ class Resizeable {
         ];
 
         this.$outerWrap = createDiv();
-        this.$outerWrap.elt.classList.add('resizeable');
+        this.$outerWrap.elt.classList.add('unselectable', 'resizeable');
         this.$outerWrap.style('width', this.$width + 'px');
         this.$outerWrap.style('height', this.$height + 'px');
         this.position(this.$x, this.$y);
@@ -479,6 +608,9 @@ class Resizeable {
             this.position(x, y); // top left corner
         }
 
+        this.setSize(w, h);
+    }
+    setSize(w, h) {
         this.$width = w;
         this.$height = h;
 
